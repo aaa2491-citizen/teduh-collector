@@ -1,0 +1,40 @@
+name: TEDUH daily collection
+
+on:
+  schedule:
+    - cron: "30 12 * * *"      # 12:30 UTC = 19:30 WIB = 07:30 New York, every day
+  workflow_dispatch:           # "Run workflow" button for testing
+    inputs:
+      national_minutes:
+        description: "Minutes for the national sweep (0 = Jakarta only)"
+        default: "320"
+
+concurrency:
+  group: teduh-collector       # never two collectors at once (BMKG limit is per IP)
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350       # GitHub hard limit per job is 6 h
+    env:
+      MONGO_URI: ${{ secrets.MONGO_URI }}
+      CONTACT: ${{ secrets.CONTACT }}
+      DB_NAME: teduh_raw
+      NATIONAL_SINK: mongo
+      NATIONAL_RETENTION_DAYS: "14"
+      STORAGE_LIMIT_MB: "5000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Jakarta (all 267 kelurahan, ~5 min)
+        run: python bmkg_collector.py --jakarta-once
+      - name: National slice (resumes from last village)
+        if: ${{ github.event.inputs.national_minutes != '0' }}
+        run: python bmkg_collector.py --national-only --national-minutes ${{ github.event.inputs.national_minutes || '320' }}
+      - name: Health summary
+        if: always()
+        run: python 04_checks.py
